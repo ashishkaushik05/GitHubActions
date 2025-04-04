@@ -1,0 +1,122 @@
+name: Security Test Suite
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Type of vulnerability to test'
+        required: true
+        type: choice
+        options:
+          - docker
+          - dependencies
+          - code
+        default: 'docker'
+
+jobs:
+  security-test:
+    name: Security Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Setup test environment
+        run: |
+          mkdir -p test-env
+          cd test-env
+
+      - name: Create vulnerable Dockerfile
+        if: github.event.inputs.test_type == 'docker'
+        run: |
+          cat > Dockerfile << 'EOF'
+          FROM node:10
+          RUN apt-get update && apt-get install -y curl
+          COPY . .
+          CMD ["node", "app.js"]
+          EOF
+
+      - name: Create vulnerable package.json
+        if: github.event.inputs.test_type == 'dependencies'
+        run: |
+          cat > package.json << 'EOF'
+          {
+            "name": "vulnerable-app",
+            "version": "1.0.0",
+            "dependencies": {
+              "express": "4.16.0",
+              "lodash": "4.17.4"
+            }
+          }
+          EOF
+
+      - name: Create vulnerable code
+        if: github.event.inputs.test_type == 'code'
+        run: |
+          cat > app.js << 'EOF'
+          const express = require('express');
+          const app = express();
+          
+          app.get('/user', (req, res) => {
+            const userInput = req.query.input;
+            res.send(`<div>${userInput}</div>`);
+          });
+          
+          app.listen(3000);
+          EOF
+
+      - name: Run security scans
+        id: scan
+        run: |
+          if [ "${{ github.event.inputs.test_type }}" == "docker" ]; then
+            docker build -t test-image .
+            trivy image test-image > scan-results.txt
+          elif [ "${{ github.event.inputs.test_type }}" == "dependencies" ]; then
+            npm audit > scan-results.txt
+          else
+            eslint --rule "no-eval: error" app.js > scan-results.txt
+          fi
+          echo "SCAN_RESULTS<<EOF" >> $GITHUB_OUTPUT
+          cat scan-results.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Send Email Notification
+        uses: ./.github/workflows/email-notification.yml
+        with:
+          scan_type: "Security Test - ${{ github.event.inputs.test_type }}"
+          vulnerabilities: ${{ steps.scan.outputs.SCAN_RESULTS }}
+          report_url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          severity: "Critical"
+          additional_info: |
+            <h3>Test Environment:</h3>
+            <p>This is a test run with intentional vulnerabilities to verify the security scanning pipeline.</p>
+            <p>The vulnerabilities detected are expected and part of the test scenario.</p>
+
+      - name: Generate test report
+        run: |
+          echo "# Security Test Report" > test-report.md
+          echo "## Test Type: ${{ github.event.inputs.test_type }}" >> test-report.md
+          echo "## Date: $(date)" >> test-report.md
+          echo "## Findings:" >> test-report.md
+          echo "- Intentional vulnerabilities were detected as expected" >> test-report.md
+          echo "- Security tools successfully identified the issues" >> test-report.md
+          echo "- Notification systems were triggered" >> test-report.md
+          echo "## Scan Results:" >> test-report.md
+          echo '```' >> test-report.md
+          cat scan-results.txt >> test-report.md
+          echo '```' >> test-report.md
+
+      - name: Upload test report
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-test-report
+          path: test-report.md
+          retention-days: 5 

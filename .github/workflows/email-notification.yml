@@ -1,0 +1,75 @@
+name: Email Notification
+
+on:
+  workflow_call:
+    inputs:
+      scan_type:
+        required: true
+        type: string
+        description: 'Type of security scan'
+      vulnerabilities:
+        required: true
+        type: string
+        description: 'Details of vulnerabilities found'
+      report_url:
+        required: true
+        type: string
+        description: 'URL to the full report'
+      severity:
+        required: true
+        type: string
+        description: 'Severity level of findings'
+      additional_info:
+        required: false
+        type: string
+        description: 'Additional information to include in the email'
+        default: ''
+
+jobs:
+  send-email:
+    name: Send Security Alert Email
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "[Security Alert] ${{ inputs.scan_type }} Scan Results"
+          to: ${{ secrets.SECURITY_TEAM_EMAIL }}
+          from: GitHub Actions Security Scanner
+          body: |
+            <h2>Security Scan Alert</h2>
+            <p><strong>Scan Type:</strong> ${{ inputs.scan_type }}</p>
+            <p><strong>Severity:</strong> ${{ inputs.severity }}</p>
+            <p><strong>Repository:</strong> ${{ github.repository }}</p>
+            <p><strong>Branch:</strong> ${{ github.ref }}</p>
+            <p><strong>Run URL:</strong> <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">View Run</a></p>
+            <p><strong>Report URL:</strong> <a href="${{ inputs.report_url }}">View Report</a></p>
+            
+            <h3>Vulnerabilities Found:</h3>
+            <pre>${{ inputs.vulnerabilities }}</pre>
+            
+            ${{ inputs.additional_info }}
+            
+            <p>Please review the security report and take appropriate action.</p>
+            <p>This is an automated message from GitHub Actions Security Scanner.</p>
+          html: true
+
+      - name: Generate Email Report
+        run: |
+          echo "# Email Notification Report" > email-report.md
+          echo "## Date: $(date)" >> email-report.md
+          echo "## Scan Type: ${{ inputs.scan_type }}" >> email-report.md
+          echo "## Severity: ${{ inputs.severity }}" >> email-report.md
+          echo "## Status: Email sent successfully" >> email-report.md
+          echo "## Recipients: ${{ secrets.SECURITY_TEAM_EMAIL }}" >> email-report.md
+
+      - name: Upload Email Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: email-notification-report
+          path: email-report.md
+          retention-days: 5 

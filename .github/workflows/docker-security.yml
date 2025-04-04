@@ -1,0 +1,132 @@
+name: Docker Security Scan
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+  workflow_dispatch:
+
+jobs:
+  security-scan:
+    name: Docker Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Build Docker image
+        run: |
+          docker build -t secure-web-app:latest .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasec/trivy-action@master
+        with:
+          image-ref: 'secure-web-app:latest'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+
+      - name: Upload Trivy scan results
+        uses: actions/upload-artifact@v3
+        with:
+          name: trivy-scan-results
+          path: trivy-results.sarif
+          retention-days: 5
+
+      - name: Generate HTML report
+        run: |
+          trivy image --format template --template "@contrib/html.tpl" -o trivy-report.html secure-web-app:latest
+
+      - name: Upload HTML report
+        uses: actions/upload-artifact@v3
+        with:
+          name: trivy-html-report
+          path: trivy-report.html
+          retention-days: 5
+
+      - name: Check for critical vulnerabilities
+        id: check-vulnerabilities
+        run: |
+          if [ -f "trivy-results.sarif" ]; then
+            critical_count=$(grep -c '"level": "error"' trivy-results.sarif)
+            if [ "$critical_count" -gt 0 ]; then
+              echo "CRITICAL_VULNERABILITIES=true" >> $GITHUB_OUTPUT
+              # Extract vulnerability details
+              vulnerabilities=$(jq -r '.runs[0].results[] | "\(.ruleId): \(.message.text)"' trivy-results.sarif)
+              echo "VULNERABILITIES<<EOF" >> $GITHUB_OUTPUT
+              echo "$vulnerabilities" >> $GITHUB_OUTPUT
+              echo "EOF" >> $GITHUB_OUTPUT
+            else
+              echo "CRITICAL_VULNERABILITIES=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "CRITICAL_VULNERABILITIES=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Email Notification for Critical Vulnerabilities
+        if: steps.check-vulnerabilities.outputs.CRITICAL_VULNERABILITIES == 'true'
+        uses: ./.github/workflows/email-notification.yml
+        with:
+          scan_type: "Docker Security"
+          vulnerabilities: ${{ steps.check-vulnerabilities.outputs.VULNERABILITIES }}
+          report_url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          severity: "Critical"
+
+      - name: Send Slack Notification for Critical Vulnerabilities
+        if: steps.check-vulnerabilities.outputs.CRITICAL_VULNERABILITIES == 'true'
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          channel-id: 'security-alerts'
+          slack-message: |
+            :warning: Critical Docker Vulnerabilities Detected
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref }}
+            Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            Please review the Trivy scan report in the artifacts.
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+
+      - name: Create GitHub Issue for Critical Vulnerabilities
+        if: steps.check-vulnerabilities.outputs.CRITICAL_VULNERABILITIES == 'true' && github.event_name == 'push'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            let report = '';
+            
+            try {
+              if (fs.existsSync('trivy-results.sarif')) {
+                const sarifReport = JSON.parse(fs.readFileSync('trivy-results.sarif', 'utf8'));
+                const criticalIssues = sarifReport.runs[0].results.filter(result => result.level === 'error');
+                
+                report = criticalIssues.map(issue => 
+                  `### ${issue.ruleId}\n` +
+                  `- Severity: ${issue.level}\n` +
+                  `- Message: ${issue.message.text}\n` +
+                  `- Location: ${issue.locations[0].physicalLocation.artifactLocation.uri}\n`
+                ).join('\n');
+              }
+            } catch (e) {
+              console.error('Error processing Trivy report:', e);
+            }
+            
+            if (report) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Critical Docker Vulnerabilities Detected',
+                body: `# Security Alert\n\nCritical vulnerabilities were detected in the Docker image:\n\n${report}\n\nPlease review the complete Trivy report in the workflow artifacts.`,
+                labels: ['security', 'vulnerability', 'docker']
+              });
+            } 

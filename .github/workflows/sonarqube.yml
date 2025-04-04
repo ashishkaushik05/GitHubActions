@@ -1,0 +1,72 @@
+name: SonarQube Analysis
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  sonarqube:
+    name: SonarQube Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+        if: contains(github.event.repository.languages, 'JavaScript')
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+        if: contains(github.event.repository.languages, 'Python')
+
+      - name: Install Node.js dependencies
+        run: npm ci
+        if: contains(github.event.repository.languages, 'JavaScript')
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+        if: contains(github.event.repository.languages, 'Python')
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_PROJECT_KEY: ${{ github.repository }}
+          SONAR_PROJECT_NAME: ${{ github.repository }}
+          SONAR_JAVASCRIPT_LCOV_REPORT_PATHS: coverage/lcov.info
+          SONAR_PYTHON_COVERAGE_REPORT_PATHS: coverage.xml
+          SONAR_QUALITYGATE_WAIT: true
+
+      - name: Check Quality Gate Status
+        id: quality-gate
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "QUALITY_GATE_STATUS=passed" >> $GITHUB_OUTPUT
+          else
+            echo "QUALITY_GATE_STATUS=failed" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Slack Notification
+        if: steps.quality-gate.outputs.QUALITY_GATE_STATUS == 'failed'
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          channel-id: 'security-alerts'
+          slack-message: |
+            :warning: SonarQube Quality Gate Failed
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref }}
+            Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            Please check the SonarQube dashboard for details.
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }} 

@@ -1,0 +1,107 @@
+name: OWASP ZAP Security Scan
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    types: [opened, synchronize, reopened]
+  schedule:
+    - cron: '0 0 * * *'  # Run daily at midnight
+
+jobs:
+  security-scan:
+    name: OWASP ZAP Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Build and start the web application
+        run: |
+          docker-compose up -d webapp
+          sleep 10  # Wait for the application to start
+
+      - name: Run OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.7.0
+        with:
+          target: 'http://localhost:3000'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a'
+        continue-on-error: true
+
+      - name: Upload ZAP Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: zap-report
+          path: |
+            zap-report.html
+            zap-report.json
+            zap-report.md
+          retention-days: 5
+
+      - name: Check for Critical Vulnerabilities
+        id: check-vulnerabilities
+        run: |
+          if [ -f "zap-report.json" ]; then
+            critical_count=$(jq '.site[] | select(.alerts[] | .riskcode == "3") | length' zap-report.json | wc -l)
+            if [ "$critical_count" -gt 0 ]; then
+              echo "CRITICAL_VULNERABILITIES=true" >> $GITHUB_OUTPUT
+            else
+              echo "CRITICAL_VULNERABILITIES=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "CRITICAL_VULNERABILITIES=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Slack Notification for Critical Vulnerabilities
+        if: steps.check-vulnerabilities.outputs.CRITICAL_VULNERABILITIES == 'true'
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          channel-id: 'security-alerts'
+          slack-message: |
+            :warning: Critical Security Vulnerabilities Detected
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref }}
+            Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            Please review the ZAP report in the artifacts.
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+
+      - name: Create GitHub Issue for Critical Vulnerabilities
+        if: steps.check-vulnerabilities.outputs.CRITICAL_VULNERABILITIES == 'true' && github.event_name == 'push'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            let report = '';
+            
+            try {
+              if (fs.existsSync('zap-report.json')) {
+                const zapReport = JSON.parse(fs.readFileSync('zap-report.json', 'utf8'));
+                const criticalIssues = zapReport.site[0].alerts.filter(alert => alert.riskcode === '3');
+                
+                report = criticalIssues.map(issue => 
+                  `### ${issue.name}\n` +
+                  `- Risk: ${issue.riskdesc}\n` +
+                  `- Description: ${issue.desc}\n` +
+                  `- Solution: ${issue.solution}\n`
+                ).join('\n');
+              }
+            } catch (e) {
+              console.error('Error processing ZAP report:', e);
+            }
+            
+            if (report) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Critical Security Vulnerabilities Detected by OWASP ZAP',
+                body: `# Security Alert\n\nCritical vulnerabilities were detected in the web application:\n\n${report}\n\nPlease review the complete ZAP report in the workflow artifacts.`,
+                labels: ['security', 'vulnerability', 'critical']
+              });
+            }
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker-compose down 

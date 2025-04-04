@@ -1,0 +1,26 @@
+10045	IGNORE	Cross Site Scripting (Reflected)
+10015	IGNORE	Application Error Disclosure
+10020	IGNORE	X-Frame-Options Header Not Set
+10021	IGNORE	X-Content-Type-Options Header Not Set
+10023	IGNORE	Information Disclosure - Debug Error Messages
+10024	IGNORE	Information Disclosure - Sensitive Information in URL
+10025	IGNORE	Information Disclosure - Suspicious Comments
+10026	IGNORE	Viewstate MAC Validation Disabled
+10027	IGNORE	Viewstate Without MAC Signature
+10028	IGNORE	Viewstate Multiple MAC Signatures
+10029	IGNORE	Viewstate No MAC Signature
+10030	IGNORE	Viewstate MAC Signature Blank
+10031	IGNORE	Viewstate MAC Signature Invalid
+10032	IGNORE	Viewstate MAC Signature Missing
+10033	IGNORE	Viewstate MAC Signature Tampered
+10034	IGNORE	Viewstate MAC Signature Invalid
+10035	IGNORE	Viewstate MAC Signature Missing
+10036	IGNORE	Viewstate MAC Signature Tampered
+10037	IGNORE	Viewstate MAC Signature Invalid
+10038	IGNORE	Viewstate MAC Signature Missing
+10039	IGNORE	Viewstate MAC Signature Tampered
+10040	IGNORE	Viewstate MAC Signature Invalid
+10041	IGNORE	Viewstate MAC Signature Missing
+10042	IGNORE	Viewstate MAC Signature Tampered
+10043	IGNORE	Viewstate MAC Signature Invalid
+10044	IGNORE	Viewstate MAC Signature Missing 

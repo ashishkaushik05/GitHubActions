@@ -161,10 +161,6 @@ Reports are generated in multiple formats:
 4. Run security tests
 5. Submit pull request
 
-## License
-
-MIT License - See LICENSE file for details
-
 ## Support
 
 For issues and feature requests, please use the GitHub issue tracker. 
